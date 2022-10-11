@@ -91,22 +91,23 @@ func (g *genericScheduler) snapshot() error {
 func (g *genericScheduler) Schedule(ctx context.Context, extenders []framework.Extender, fwk framework.Framework, state *framework.CycleState, pod *v1.Pod) (result ScheduleResult, err error) {
 	trace := utiltrace.New("Scheduling", utiltrace.Field{Key: "namespace", Value: pod.Namespace}, utiltrace.Field{Key: "name", Value: pod.Name})
 	defer trace.LogIfLong(100 * time.Millisecond)
-
+        // 对cache中的nodes进行打快照，避免在调度过程中cache的变化，引发调度的不一致
 	if err := g.snapshot(); err != nil {
 		return result, err
 	}
 	trace.Step("Snapshotting scheduler cache and node infos done")
-
+        // 如果没有节点信息直接返回
 	if g.nodeInfoSnapshot.NumNodes() == 0 {
 		return result, ErrNoNodesAvailable
 	}
-
+        // 为pod 找出适合的节点，diagnosis 表示调度结论，多少节点参与调度，以及在哪个插件调度失败等信息
 	feasibleNodes, diagnosis, err := g.findNodesThatFitPod(ctx, extenders, fwk, state, pod)
 	if err != nil {
 		return result, err
 	}
 	trace.Step("Computing predicates done")
-
+        
+	// 没有合适的节点
 	if len(feasibleNodes) == 0 {
 		return result, &framework.FitError{
 			Pod:         pod,
@@ -114,7 +115,8 @@ func (g *genericScheduler) Schedule(ctx context.Context, extenders []framework.E
 			Diagnosis:   diagnosis,
 		}
 	}
-
+        
+	// 只选出一个合适的节点，就没有必要进行打分了，直接返回
 	// When only one node after predicate, just use it.
 	if len(feasibleNodes) == 1 {
 		return ScheduleResult{
@@ -123,12 +125,13 @@ func (g *genericScheduler) Schedule(ctx context.Context, extenders []framework.E
 			FeasibleNodes:  1,
 		}, nil
 	}
-
+        
+	// 对适合节点，进行评分，同时返回NodeScores
 	priorityList, err := prioritizeNodes(ctx, extenders, fwk, state, pod, feasibleNodes)
 	if err != nil {
 		return result, err
 	}
-
+        // 选出评分最高的节点
 	host, err := g.selectHost(priorityList)
 	trace.Step("Prioritizing done")
 
