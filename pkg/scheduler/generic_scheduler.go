@@ -167,6 +167,7 @@ func (g *genericScheduler) selectHost(nodeScoreList framework.NodeScoreList) (st
 	return selected, nil
 }
 
+// 在节点规模比较大的时候，大于1000时，可以根据percentageOfNodesToScore进行采样，MAX（numAllNodes * adaptivePercentage / 100，minFeasibleNodesToFind=100）
 // numFeasibleNodesToFind returns the number of feasible nodes that once found, the scheduler stops
 // its search for more feasible nodes.
 func (g *genericScheduler) numFeasibleNodesToFind(numAllNodes int32) (numNodes int32) {
