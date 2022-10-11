@@ -214,11 +214,13 @@ func (g *genericScheduler) evaluateNominatedNode(ctx context.Context, extenders 
 // Filters the nodes to find the ones that fit the pod based on the framework
 // filter plugins and filter extenders.
 func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, extenders []framework.Extender, fwk framework.Framework, state *framework.CycleState, pod *v1.Pod) ([]*v1.Node, framework.Diagnosis, error) {
+	// 初始化调度结果的对象
 	diagnosis := framework.Diagnosis{
 		NodeToStatusMap:      make(framework.NodeToStatusMap),
 		UnschedulablePlugins: sets.NewString(),
 	}
-
+        
+        // 注意 前置过滤是不会传入节点的
 	// Run "prefilter" plugins.
 	s := fwk.RunPreFilterPlugins(ctx, state, pod)
 	allNodes, err := g.nodeInfoSnapshot.NodeInfos().List()
@@ -238,7 +240,9 @@ func (g *genericScheduler) findNodesThatFitPod(ctx context.Context, extenders []
 		diagnosis.UnschedulablePlugins.Insert(s.FailedPlugin())
 		return nil, diagnosis, nil
 	}
-
+         
+	// 由于抢占调度有可能在先前的调度周期中设置Pod.Status.NominatedNodeName。
+	// 该Node可能是唯一适合该Pod的候选Node，因此，在遍历所有Node之前先尝试提名的Node
 	// "NominatedNodeName" can potentially be set in a previous scheduling cycle as a result of preemption.
 	// This node is likely the only candidate that will fit the pod, and hence we try it first before iterating over all nodes.
 	if len(pod.Status.NominatedNodeName) > 0 {
