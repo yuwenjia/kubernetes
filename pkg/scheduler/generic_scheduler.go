@@ -72,9 +72,17 @@ type ScheduleResult struct {
 }
 
 type genericScheduler struct {
+	// 缓存
 	cache                    internalcache.Cache
+        // 缓存快照
 	nodeInfoSnapshot         *internalcache.Snapshot
+	// 比如一共有1000个Node，如果1000个都是可行Node，那么就需要计算1000个Node的分数，这可能是一个比较大的计算量。
+        // 真的需要1000个Node都参与评分么？不一定，可能100个就够了，有的时候不需要找到全局的最优解，局部最优也是不错的，只要这个局部数量别太少。
 	percentageOfNodesToScore int32
+	// 就是因为percentageOfNodesToScore的存在，可能只要一部分Node参与调度。
+        // 那么下次调度的时候希望不要一直在同一批Node上调度，直到有Node过滤失败再有新的Node加入进来。
+        // nextStartNodeIndex就是用来记录下一次调度的时候从哪个Node开始遍历，每次调度完成后nextStartNodeIndex需要加上此次调度遍历Node的数量。
+        // 这样调度下一个Pod的时候就从下一批Node开始，当然每次更新nextStartNodeIndex的时候需要考虑超出范围归零的问题。
 	nextStartNodeIndex       int
 }
 
