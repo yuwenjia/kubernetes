@@ -150,12 +150,15 @@ func (g *genericScheduler) Schedule(ctx context.Context, extenders []framework.E
 	}, err
 }
 
+// selectHost()根据所有可行Node的评分找到最优的Node
 // selectHost takes a prioritized list of nodes and then picks one
 // in a reservoir sampling manner from the nodes that had the highest score.
 func (g *genericScheduler) selectHost(nodeScoreList framework.NodeScoreList) (string, error) {
+	// 没有可行Node的评分，返回错误
 	if len(nodeScoreList) == 0 {
 		return "", fmt.Errorf("empty priorityList")
 	}
+	// 在nodeScoreList中找到分数最高的Node，初始化第0个Node分数最高
 	maxScore := nodeScoreList[0].Score
 	selected := nodeScoreList[0].Name
 	cntOfMaxScore := 1
@@ -165,6 +168,7 @@ func (g *genericScheduler) selectHost(nodeScoreList framework.NodeScoreList) (st
 			selected = ns.Name
 			cntOfMaxScore = 1
 		} else if ns.Score == maxScore {
+			// 当节点的分数相同时，用[0,cntOfMaxScore)的随机数表示节点有1/cntOfMaxScore概率成为最优节点
 			cntOfMaxScore++
 			if rand.Intn(cntOfMaxScore) == 0 {
 				// Replace the candidate with probability of 1/cntOfMaxScore
@@ -469,6 +473,7 @@ func prioritizeNodes(
 		}
 	}
          
+
 	if len(extenders) != 0 && nodes != nil {
 		var mu sync.Mutex
 		var wg sync.WaitGroup
