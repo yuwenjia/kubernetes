@@ -434,10 +434,12 @@ func (cache *schedulerCache) addPod(pod *v1.Pod, assumePod bool) error {
 	// 是否在所有节点项的集合中
 	n, ok := cache.nodes[pod.Spec.NodeName]
 	if !ok {
-		// 如果不在，为什么要新建一个呢？
+	   // 如果不在，为什么要新建一个呢？pod 自身已经定义了node name,但是这个node不在缓存中，可能kube-scheduler调度Pod的时候Node被删除了，可能很快还会添加回来
+           // 也可能就彻底删除了，此时先放在这个虚的Node上，如果Node不存在后期还会被迁移。
 		n = newNodeInfoListItem(framework.NewNodeInfo())
 		cache.nodes[pod.Spec.NodeName] = n
 	}
+	// AddPod就是把Pod的资源累加到NodeInfo中，同时n.info.AddPod(pod)会更新NodeInfo.Generation
 	n.info.AddPod(pod)
 	cache.moveNodeInfoToHead(pod.Spec.NodeName)
 	ps := &podState{
