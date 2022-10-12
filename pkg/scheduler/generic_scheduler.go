@@ -183,21 +183,33 @@ func (g *genericScheduler) selectHost(nodeScoreList framework.NodeScoreList) (st
 // numFeasibleNodesToFind returns the number of feasible nodes that once found, the scheduler stops
 // its search for more feasible nodes.
 func (g *genericScheduler) numFeasibleNodesToFind(numAllNodes int32) (numNodes int32) {
+	// minFeasibleNodesToFind是一个常量(100)，也就是说无论比例是多少，最少也要100个Node，除非Node总数就不足100个。
+        // g.percentageOfNodesToScore >= 100等于比例无效，无论多少Node都可以
 	if numAllNodes < minFeasibleNodesToFind || g.percentageOfNodesToScore >= 100 {
 		return numAllNodes
 	}
-
+	
 	adaptivePercentage := g.percentageOfNodesToScore
 	if adaptivePercentage <= 0 {
+		// 基础比例是50%
 		basePercentageOfNodesToScore := int32(50)
+               // Node总数满125个比例减一，可以持续累加，这个跟双十一满减一个原理，至于为什么是125笔者还没弄清楚。
+               // 这可以理解，单纯的比例并不合理，尤其是Node总量非常大的情况下，比例应该适当调低。
+               // 所以可以用函数y=(50x-0.008x^2)/100表示最终Node数量。初中数据告诉我们这是一个开口朝下的抛物线。
+               // 这个函数有一个最大值，是当x=-b/2a，即Node总量为3125个时，应该选择782个Node。
+              // 也就是说，当Node总量在[100(前面过滤了小于100的情况), 3125]时，选择Node的数量是在[49，782]范围单调递增的；
+              // 当Node数量[3125, 7250]时，选择Node的数量是在[782, 0]单点递减的，超过7250比例就会变为负数。
 		adaptivePercentage = basePercentageOfNodesToScore - numAllNodes/125
+		// 比例总不能<=0吧？所以就有了minFeasibleNodesPercentageToFind(5)，即最小比例也应该是5%
 		if adaptivePercentage < minFeasibleNodesPercentageToFind {
 			adaptivePercentage = minFeasibleNodesPercentageToFind
 		}
 	}
-
+        // 按照比例计算Node数量，adaptivePercentage = 50 - 0.008*numAllNodes
+	// 所以numNodes = (50*numAllNodes - 0.008*numAllNodes^2) / 100，就是上面y=(50x-0.008x^2)/100的公式
 	numNodes = numAllNodes * adaptivePercentage / 100
 	if numNodes < minFeasibleNodesToFind {
+		// 最终还要限制在>=100范围，因为太少会影响调度效果
 		return minFeasibleNodesToFind
 	}
 
