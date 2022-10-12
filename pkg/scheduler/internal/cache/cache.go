@@ -486,7 +486,7 @@ func (cache *schedulerCache) removePod(pod *v1.Pod) error {
 	delete(cache.assumedPods, key)
 	return nil
 }
-
+// 只存在pod 已经被调度的场景,添加到缓存
 func (cache *schedulerCache) AddPod(pod *v1.Pod) error {
 	key, err := framework.GetPodKey(pod)
 	if err != nil {
@@ -495,22 +495,27 @@ func (cache *schedulerCache) AddPod(pod *v1.Pod) error {
 
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-
+        // 是否在缓存中存在
 	currState, ok := cache.podStates[key]
 	switch {
+	// 如果在缓存中，且假定的缓存也存在
 	case ok && cache.assumedPods.Has(key):
 		if currState.pod.Spec.NodeName != pod.Spec.NodeName {
+			// 以假定为准，更新缓存
 			// The pod was added to a different node than it was assumed to.
 			klog.InfoS("Pod was added to a different node than it was assumed", "pod", klog.KObj(pod), "assumedNode", klog.KRef("", pod.Spec.NodeName), "currentNode", klog.KRef("", currState.pod.Spec.NodeName))
 			if err = cache.updatePod(currState.pod, pod); err != nil {
 				klog.ErrorS(err, "Error occurred while updating pod")
 			}
 		} else {
+			// 删除假定缓存
 			delete(cache.assumedPods, key)
 			cache.podStates[key].deadline = nil
 			cache.podStates[key].pod = pod
 		}
 	case !ok:
+		// 这里目前分为两种情况，第一种调度器发生重启，需要将已经被调度的，重新加入缓存
+		// 第二种？
 		// Pod was expired. We should add it back.
 		if err = cache.addPod(pod, false); err != nil {
 			klog.ErrorS(err, "Error occurred while adding pod")
