@@ -400,6 +400,7 @@ func (cache *schedulerCache) finishBinding(pod *v1.Pod, now time.Time) error {
 	klog.V(5).InfoS("Finished binding for pod, can be expired", "pod", klog.KObj(pod))
 	currState, ok := cache.podStates[key]
 	if ok && cache.assumedPods.Has(key) {
+		// 完成绑定后，设置假定的过期时间
 		dl := now.Add(cache.ttl)
 		currState.bindingFinished = true
 		currState.deadline = &dl
