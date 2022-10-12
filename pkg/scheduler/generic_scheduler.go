@@ -434,19 +434,21 @@ func prioritizeNodes(
 		}
 		return result, nil
 	}
-
+        // 运行所有PreScorePlugin准备评分数据
 	// Run PreScore plugins.
 	preScoreStatus := fwk.RunPreScorePlugins(ctx, state, pod, nodes)
 	if !preScoreStatus.IsSuccess() {
 		return nil, preScoreStatus.AsError()
 	}
-
+        
+	// 运行所有ScorePlugin对Node进行评分，此处需要知道的是scoresMap的类型是map[string][]NodeScore。
+        // scoresMap的key是插件名字，value是该插件对所有Node的评分
 	// Run the Score plugins.
 	scoresMap, scoreStatus := fwk.RunScorePlugins(ctx, state, pod, nodes)
 	if !scoreStatus.IsSuccess() {
 		return nil, scoreStatus.AsError()
 	}
-
+        
 	// Additional details logged at level 10 if enabled.
 	klogV := klog.V(10)
 	if klogV.Enabled() {
@@ -459,14 +461,14 @@ func prioritizeNodes(
 
 	// Summarize all scores.
 	result := make(framework.NodeScoreList, 0, len(nodes))
-
+        // 计算每个插件对每个节点跑分的结果
 	for i := range nodes {
 		result = append(result, framework.NodeScore{Name: nodes[i].Name, Score: 0})
 		for j := range scoresMap {
 			result[i].Score += scoresMap[j][i].Score
 		}
 	}
-
+         
 	if len(extenders) != 0 && nodes != nil {
 		var mu sync.Mutex
 		var wg sync.WaitGroup
