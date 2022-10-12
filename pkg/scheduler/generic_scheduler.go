@@ -373,18 +373,24 @@ func (g *genericScheduler) findNodesThatPassFilters(
 	return feasibleNodes, nil
 }
 
+// findNodesThatPassExtenders()利用Extender过滤Node
 func findNodesThatPassExtenders(extenders []framework.Extender, pod *v1.Pod, feasibleNodes []*v1.Node, statuses framework.NodeToStatusMap) ([]*v1.Node, error) {
+	
+	// 遍历Extender, Extender是顺序调用的，而不是并发调用的。在一个Extender中排除一些可行Node，然后以递减的方式传递给下一个Extender。
+	// 这种设计虽然可能降低Extender的传递Node的数据量，但是串行执行远程调用效率确实不可观。
 	// Extenders are called sequentially.
 	// Nodes in original feasibleNodes can be excluded in one extender, and pass on to the next
 	// extender in a decreasing manner.
 	for _, extender := range extenders {
+		// 可行的Node数量为0就没必要过滤了
 		if len(feasibleNodes) == 0 {
 			break
 		}
+		// Pod申请的资源不是Extender管理的也就不需要用它来过滤，这也是一种有效的提升效率的方法，尽量避免无效的远程调用。比如：Extender扩展了GPU，但是这个pod申请资源并没有
 		if !extender.IsInterested(pod) {
 			continue
 		}
-
+              
 		// Status of failed nodes in failedAndUnresolvableMap will be added or overwritten in <statuses>,
 		// so that the scheduler framework can respect the UnschedulableAndUnresolvable status for
 		// particular nodes, and this may eventually improve preemption efficiency.
@@ -392,13 +398,16 @@ func findNodesThatPassExtenders(extenders []framework.Extender, pod *v1.Pod, fea
 		// status ahead of others.
 		feasibleList, failedMap, failedAndUnresolvableMap, err := extender.Filter(pod, feasibleNodes)
 		if err != nil {
+			// 如果Extender是可以忽略的，就会忽略Extender报错，也就是说调度Pod有没有该Extender参与都行，有自然更好。
 			if extender.IsIgnorable() {
 				klog.InfoS("Skipping extender as it returned error and has ignorable flag set", "extender", extender, "err", err)
 				continue
 			}
 			return nil, err
 		}
-
+		
+                // failAndUnresolvableMap中失败节点的状态会添加或覆盖到statuses。
+		// 以便调度框架可以知悉特定节点的UnschedulableAndUnresolvable状态，这最终可以提高抢占效率。
 		for failedNodeName, failedMsg := range failedAndUnresolvableMap {
 			var aggregatedReasons []string
 			if _, found := statuses[failedNodeName]; found {
@@ -407,9 +416,10 @@ func findNodesThatPassExtenders(extenders []framework.Extender, pod *v1.Pod, fea
 			aggregatedReasons = append(aggregatedReasons, failedMsg)
 			statuses[failedNodeName] = framework.NewStatus(framework.UnschedulableAndUnresolvable, aggregatedReasons...)
 		}
-
+		// 追加Extender过滤失败的原因
 		for failedNodeName, failedMsg := range failedMap {
 			if _, found := failedAndUnresolvableMap[failedNodeName]; found {
+				// failedAndUnresolvableMap优先于failedMap，请注意，仅当Extender在两个map中都返回Node时，才会发生这种情况
 				// failedAndUnresolvableMap takes precedence over failedMap
 				// note that this only happens if the extender returns the node in both maps
 				continue
@@ -420,7 +430,7 @@ func findNodesThatPassExtenders(extenders []framework.Extender, pod *v1.Pod, fea
 				statuses[failedNodeName].AppendReason(failedMsg)
 			}
 		}
-
+                // Extender过滤通过的Node作为下一个Extender过滤的候选         
 		feasibleNodes = feasibleList
 	}
 	return feasibleNodes, nil
