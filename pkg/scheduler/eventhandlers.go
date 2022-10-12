@@ -177,6 +177,7 @@ func (sched *Scheduler) deletePodFromSchedulingQueue(obj interface{}) {
 	}
 }
 
+// kube-scheduler处理已调度Pod的Added事件的函数, 当调度器重新启动时，应该将已经调度的pod 资源装进缓存，进行资源计算
 func (sched *Scheduler) addPodToCache(obj interface{}) {
 	pod, ok := obj.(*v1.Pod)
 	if !ok {
@@ -184,11 +185,11 @@ func (sched *Scheduler) addPodToCache(obj interface{}) {
 		return
 	}
 	klog.V(3).InfoS("Add event for scheduled pod", "pod", klog.KObj(pod))
-
+        // 添加pod 到缓存
 	if err := sched.SchedulerCache.AddPod(pod); err != nil {
 		klog.ErrorS(err, "Scheduler cache AddPod failed", "pod", klog.KObj(pod))
 	}
-
+	// 此处并不是向调度队列添加Pod，而是触发调度队列更新可能依赖于此Pod的其他Pod的调度状态。
 	sched.SchedulingQueue.AssignedPodAdded(pod)
 }
 
