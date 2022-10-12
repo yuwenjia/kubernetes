@@ -30,6 +30,8 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/metrics"
 )
 
+/*** Cache是缓存已经被调度和假定被调度的pod信息的****/
+
 var (
 	cleanAssumedPeriod = 1 * time.Second
 )
@@ -384,6 +386,7 @@ func (cache *schedulerCache) FinishBinding(pod *v1.Pod) error {
 	return cache.finishBinding(pod, time.Now())
 }
 
+// 当假定Pod绑定完成后,将缓存中绑定的标志位为true,同时会有一个协程去清理是否bing
 // finishBinding exists to make tests determinitistic by injecting now as an argument
 func (cache *schedulerCache) finishBinding(pod *v1.Pod, now time.Time) error {
 	key, err := framework.GetPodKey(pod)
@@ -488,7 +491,7 @@ func (cache *schedulerCache) removePod(pod *v1.Pod) error {
 	delete(cache.assumedPods, key)
 	return nil
 }
-// 只存在pod 已经被调度的场景,添加到缓存
+// 存在两种场景，第一 pod 假定完以后，同时调度成功了进行确认。 第二 调度服务重启后，加载已经被调度的pod进入缓存
 func (cache *schedulerCache) AddPod(pod *v1.Pod) error {
 	key, err := framework.GetPodKey(pod)
 	if err != nil {
@@ -510,7 +513,7 @@ func (cache *schedulerCache) AddPod(pod *v1.Pod) error {
 				klog.ErrorS(err, "Error occurred while updating pod")
 			}
 		} else {
-			// 删除假定缓存
+			// 删除假定缓存（调度成功后的确认流程）
 			delete(cache.assumedPods, key)
 			cache.podStates[key].deadline = nil
 			cache.podStates[key].pod = pod
