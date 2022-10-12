@@ -55,33 +55,47 @@ type nodeInfoListItem struct {
 
 type schedulerCache struct {
 	stop   <-chan struct{}
+	// assume的Pod一旦完成绑定，就要在指定的时间内确认，否则就会超时，ttl就是指定的过期时间，默认30秒
 	ttl    time.Duration
+	// 定时清理“假定过期”的Pod，period就是定时周期，默认是1秒钟
+        // 前面提到了schedulerCache有自己的协程，就是定时清理超时的假定Pod.
 	period time.Duration
 
 	// This mutex guards all fields within this cache struct.
 	mu sync.RWMutex
+	// 假定Pod集合，map的key与podStates相同，都是Pod的NS+NAME，值为true就是假定Pod
 	// a set of assumed pod keys.
 	// The key could further be used to get an entry in podStates.
 	assumedPods sets.String
+	// podState继承了Pod的API定义，增加了Cache需要的属性
+        //在原生的pod根据缓存的特性进行封装
 	// a map from pod key to podState.
 	podStates map[string]*podState
+	// 所有的Node，键是Node.Name，值是nodeInfoList链表的item
 	nodes     map[string]*nodeInfoListItem
+	// 所有的Node再通过双向链表连接起来
 	// headNode points to the most recently updated NodeInfo in "nodes". It is the
 	// head of the linked list.
 	headNode *nodeInfoListItem
+	// 节点按照zone组织成树状，前面提到用nodeTree中Node的名字再到nodes中就可以查找到NodeInfo.
 	nodeTree *nodeTree
+	// 镜像状态，统计镜像的信息
 	// A map from image name to its imageState.
 	imageStates map[string]*imageState
 }
 
+// podState与继承了Pod的API类型定义，同时扩展了schedulerCache需要的属性.
 type podState struct {
 	pod *v1.Pod
+	// 假定Pod的超时截止时间，用于判断假定Pod是否过期
 	// Used by assumedPod to determinate expiration.
 	deadline *time.Time
+	// bindingFinished就是用于标记已经Bind完成的Pod，然后开始计时，计时的方法就是设置deadline
 	// Used to block cache from expiring assumedPod if binding still runs
 	bindingFinished bool
 }
 
+// 镜像的状态
 type imageState struct {
 	// Size of the image
 	size int64
@@ -89,6 +103,7 @@ type imageState struct {
 	nodes sets.String
 }
 
+// 节点上镜像信息和大小的总和
 // createImageStateSummary returns a summarizing snapshot of the given image's state.
 func (cache *schedulerCache) createImageStateSummary(state *imageState) *framework.ImageStateSummary {
 	return &framework.ImageStateSummary{
@@ -346,7 +361,9 @@ func (cache *schedulerCache) PodCount() (int, error) {
 	}
 	return count, nil
 }
-
+// 当kube-scheduler找到最优的Node调度Pod的时候会调用AssumePod假定Pod调度，在通过另一个协程异步Bind。假定其实就是预先占住资源，
+// kube-scheduler调度下一个Pod的时候不会把这部分资源抢走，
+// 直到收到确认消息AddPod确认调度成功，亦或是Bind失败ForgetPod取消假定调
 func (cache *schedulerCache) AssumePod(pod *v1.Pod) error {
 	key, err := framework.GetPodKey(pod)
 	if err != nil {
@@ -355,10 +372,11 @@ func (cache *schedulerCache) AssumePod(pod *v1.Pod) error {
 
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	// 如果Pod已经存在，则不能假定调度。因为在Cache中的Pod要么是假定调度的，要么是完成调度的
 	if _, ok := cache.podStates[key]; ok {
 		return fmt.Errorf("pod %v is in the cache, so can't be assumed", key)
 	}
-
+        // 添加pod,会判断是否是假定的pod
 	return cache.addPod(pod, true)
 }
 
@@ -413,8 +431,10 @@ func (cache *schedulerCache) addPod(pod *v1.Pod, assumePod bool) error {
 	if err != nil {
 		return err
 	}
+	// 是否在所有节点项的集合中
 	n, ok := cache.nodes[pod.Spec.NodeName]
 	if !ok {
+		// 如果不在，为什么要新建一个呢？
 		n = newNodeInfoListItem(framework.NewNodeInfo())
 		cache.nodes[pod.Spec.NodeName] = n
 	}
