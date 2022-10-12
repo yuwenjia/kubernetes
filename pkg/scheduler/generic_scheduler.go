@@ -284,12 +284,13 @@ func (g *genericScheduler) findNodesThatPassFilters(
 	pod *v1.Pod,
 	diagnosis framework.Diagnosis,
 	nodes []*framework.NodeInfo) ([]*v1.Node, error) {
+        // 取样出需要过滤的节点数量
 	numNodesToFind := g.numFeasibleNodesToFind(int32(len(nodes)))
 
 	// Create feasible list with enough space to avoid growing it
 	// and allow assigning.
 	feasibleNodes := make([]*v1.Node, numNodesToFind)
-
+	// 如果没有过滤插件直接根据nextStartNodeIndex 从所有的node中取出numNodesToFind个节点
 	if !fwk.HasFilterPlugins() {
 		length := len(nodes)
 		for i := range feasibleNodes {
@@ -303,6 +304,7 @@ func (g *genericScheduler) findNodesThatPassFilters(
 	var statusesLock sync.Mutex
 	var feasibleNodesLen int32
 	ctx, cancel := context.WithCancel(ctx)
+	// 从取样的节点集合中取出节点，同时跑过滤插件
 	checkNode := func(i int) {
 		// We check the nodes starting from where we left off in the previous scheduling cycle,
 		// this is to make sure all nodes have the same chance of being examined across pods.
@@ -336,13 +338,16 @@ func (g *genericScheduler) findNodesThatPassFilters(
 		// Note that this latency also includes latency for `addNominatedPods`, which calls framework.RunPreFilterAddPod.
 		metrics.FrameworkExtensionPointDuration.WithLabelValues(runtime.Filter, statusCode.String(), fwk.ProfileName()).Observe(metrics.SinceInSeconds(beginCheckNode))
 	}()
-
+        
+	// 启动多个协程并行过滤Node，此处需要注意的是并不是启动了len(allNodes)协程，parallelize包有一个并行度，默认值是16.
+        // 如果并行度是16，那么最多启动16个协程，每个协程负责过滤一部分Node，就是典型的MapReduce模型。
+        // 举个例子，如果总共有64个Node，那么每个协程负责过滤4个连续的Node。
 	// Stops searching for more nodes once the configured number of feasible nodes
 	// are found.
 	fwk.Parallelizer().Until(ctx, len(nodes), checkNode)
 	processedNodes := int(feasibleNodesLen) + len(diagnosis.NodeToStatusMap)
 	g.nextStartNodeIndex = (g.nextStartNodeIndex + processedNodes) % len(nodes)
-
+        
 	feasibleNodes = feasibleNodes[:feasibleNodesLen]
 	if err := errCh.ReceiveError(); err != nil {
 		statusCode = framework.Error
