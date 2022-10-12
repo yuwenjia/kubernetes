@@ -38,6 +38,7 @@ import (
 )
 
 const (
+	//minFeasibleNodesToFind是一个常量(100)，也就是说无论比例是多少，最少采样也要100个Node，除非Node总数就不足100个。
 	// minFeasibleNodesToFind is the minimum number of nodes that would be scored
 	// in each scheduling cycle. This is a semi-arbitrary value to ensure that a
 	// certain minimum of nodes are checked for feasibility. This in turn helps
