@@ -35,6 +35,9 @@ import (
 	schedutil "k8s.io/kubernetes/pkg/scheduler/util"
 )
 
+/************定义podinfo 和nodeinfo,以及对它两的操作方法************/
+
+// 定义节点变化的版本
 var generation int64
 
 // ActionType is an integer to represent one type of resource change.
@@ -74,6 +77,7 @@ const (
 	WildCard              GVK = "*"
 )
 
+// 调度器感兴趣的事件类型
 // ClusterEvent abstracts how a system resource's state gets changed.
 // Resource represents the standard API resources such as Pod, Node, etc.
 // ActionType denotes the specific change such as Add, Update or Delete.
@@ -88,21 +92,28 @@ func (ce ClusterEvent) IsWildCard() bool {
 	return ce.Resource == WildCard && ce.ActionType == All
 }
 
+// QueuedPodInfo是在Pod的API对象基础上增加了一些与调度队列相关的变量，所以在调度队列中管理的Pod对象是QueuedPodInfo类型的
 // QueuedPodInfo is a Pod wrapper with additional information related to
 // the pod's status in the scheduling queue, such as the timestamp when
 // it's added to the queue.
 type QueuedPodInfo struct {
+	 // 继承Pod的API类型
 	*PodInfo
+	// Pod添加到调度队列的时间。因为Pod可能会频繁的从调度队列中取出(用于调度)然后再放入调度队列(不可调度)
+        // 所以每次进入队列时都会记录入队列的时间，这个时间作用很大，后面在分析调度队列的实现的时候会提到。
 	// The time pod added to the scheduling queue.
 	Timestamp time.Time
+	// Pod尝试调度的次数。应该说，正常的情况下Pod一次就会调度成功，但是在一些异常情况下（比如资源不足），Pod可能会被尝试调度多次
 	// Number of schedule attempts before successfully scheduled.
 	// It's used to record the # attempts metric.
 	Attempts int
+	// Pod第一次添加到调度队列的时间，Pod调度成功前可能会多次加回队列，这个变量可以用来计算Pod的调度延迟（即从Pod入队到最终调度成功所用时间）
 	// The time when the pod is added to the queue for the first time. The pod may be added
 	// back to the queue multiple times before it's successfully scheduled.
 	// It shouldn't be updated once initialized. It's used to record the e2e scheduling
 	// latency for a pod.
 	InitialAttemptTimestamp time.Time
+	// 记录pod 被调度失败的插件
 	// If a Pod failed in a scheduling cycle, record the plugin names it failed by.
 	UnschedulablePlugins sets.String
 }
@@ -117,6 +128,7 @@ func (pqi *QueuedPodInfo) DeepCopy() *QueuedPodInfo {
 	}
 }
 
+// pod中的软硬亲和、反亲和信息
 // PodInfo is a wrapper to a Pod with additional pre-computed information to
 // accelerate processing. This information is typically immutable (e.g., pre-processed
 // inter-pod affinity selectors).
@@ -141,6 +153,7 @@ func (pi *PodInfo) DeepCopy() *PodInfo {
 	}
 }
 
+// 更新pod 的亲和性和反亲和性信息
 // Update creates a full new PodInfo by default. And only updates the pod when the PodInfo
 // has been instantiated and the passed pod is the exact same one as the original pod.
 func (pi *PodInfo) Update(pod *v1.Pod) {
@@ -189,14 +202,17 @@ func (pi *PodInfo) Update(pod *v1.Pod) {
 	pi.ParseError = utilerrors.NewAggregate(parseErrs)
 }
 
+// Pod 亲和性的条目
 // AffinityTerm is a processed version of v1.PodAffinityTerm.
 type AffinityTerm struct {
 	Namespaces        sets.String
 	Selector          labels.Selector
+	// 拓扑域
 	TopologyKey       string
 	NamespaceSelector labels.Selector
 }
 
+// pod 亲和性和namespaces标签的匹配
 // Matches returns true if the pod matches the label selector and namespaces or namespace selector.
 func (at *AffinityTerm) Matches(pod *v1.Pod, nsLabels labels.Set) bool {
 	if at.Namespaces.Has(pod.Namespace) || at.NamespaceSelector.Matches(nsLabels) {
@@ -365,36 +381,41 @@ type ImageStateSummary struct {
 type NodeInfo struct {
 	// Overall node information.
 	node *v1.Node
-
+        // 运行在Node上的所有Pod
 	// Pods running on the node.
 	Pods []*PodInfo
-
+	// PodsWithAffinity是Pods的子集，所有的Pod都声明了亲和性
 	// The subset of pods with affinity.
 	PodsWithAffinity []*PodInfo
-
+	// PodsWithRequiredAntiAffinity是Pods子集，所有的Pod都声明了反亲和性
 	// The subset of pods with required anti-affinity.
 	PodsWithRequiredAntiAffinity []*PodInfo
-
+	// 节点上已经被分配的端口
 	// Ports allocated on the node.
 	UsedPorts HostPortInfo
-
+	// 此Node上所有Pod的总Request资源，包括假定的Pod，调度器已发送该Pod进行绑定，但可能尚未对其进行调度
 	// Total requested resources of all pods on this node. This includes assumed
 	// pods, which scheduler has sent for binding, but may not be scheduled yet.
 	Requested *Resource
+	// Pod的容器资源请求有的时候是0，kube-scheduler为这类容器设置默认的资源最小值，并累加到NonZeroRequested.
+        // 也就是说，NonZeroRequested等于Requested加上所有按照默认最小值累加的零资源
+        // 这并不反映此节点的实际资源请求，而是用于避免将许多零资源请求的Pod调度到一个Node上
+	// 就是记录没有设置request值的，避免QOS低的pod调度同一节点
 	// Total requested resources of all pods on this node with a minimum value
 	// applied to each container's CPU and memory requests. This does not reflect
 	// the actual resource requests for this node, but is used to avoid scheduling
 	// many zero-request pods onto one node.
 	NonZeroRequested *Resource
+        // Node的可分配的资源量
 	// We store allocatedResources (which is Node.Status.Allocatable.*) explicitly
 	// as int64, to avoid conversions and accessing map.
 	Allocatable *Resource
-
+	// 镜像状态，比如Node上有哪些镜像，镜像的大小，有多少Node相应的镜像等。
 	// ImageStates holds the entry of an image if and only if this image is on the node. The entry can be used for
 	// checking an image's existence and advanced usage (e.g., image locality scheduling policy) based on the image
 	// state information.
 	ImageStates map[string]*ImageStateSummary
-
+	
 	// PVCRefCounts contains a mapping of PVC names to the number of pods on the node using it.
 	// Keys are in the format "namespace/name".
 	PVCRefCounts map[string]int
@@ -584,6 +605,7 @@ func (n *NodeInfo) String() string {
 		podKeys, n.Requested, n.NonZeroRequested, n.UsedPorts, n.Allocatable)
 }
 
+// 添加节点添加pod 时，累加节点的Requested值，pod亲和性端口pvc等信息，同时更新节点的版本
 // AddPodInfo adds pod information to this NodeInfo.
 // Consider using this instead of AddPod if a PodInfo is already computed.
 func (n *NodeInfo) AddPodInfo(podInfo *PodInfo) {
@@ -647,6 +669,7 @@ func removeFromSlice(s []*PodInfo, k string) []*PodInfo {
 	return s
 }
 
+// 移除pod 扣除nodeinfo上的相关资源
 // RemovePod subtracts pod information from this NodeInfo.
 func (n *NodeInfo) RemovePod(pod *v1.Pod) error {
 	k, err := GetPodKey(pod)
@@ -716,7 +739,8 @@ func max(a, b int64) int64 {
 	}
 	return b
 }
-
+	
+// pod中包含的Containers资源也算进去
 // resourceRequest = max(sum(podSpec.Containers), podSpec.InitContainers) + overHead
 func calculateResource(pod *v1.Pod) (res Resource, non0CPU int64, non0Mem int64) {
 	resPtr := &res
