@@ -45,7 +45,10 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/util"
 )
 
+/**************将等待调度的pod 添加进入队列*********************/
+
 const (
+	// 呆在未被调度的最大时长为60s
 	// DefaultPodMaxUnschedulableQDuration is the default value for the maximum
 	// time a pod can stay in unschedulableQ. If a pod stays in unschedulableQ
 	// for longer than this value, the pod will be moved from unschedulableQ to
@@ -56,7 +59,7 @@ const (
 	queueClosed = "scheduling queue is closed"
 )
 
-const (
+const ( 
 	// DefaultPodInitialBackoffDuration is the default value for the initial backoff duration
 	// for unschedulable pods. To change the default podInitialBackoffDurationSeconds used by the
 	// scheduler, update the ComponentConfig value in defaults.go
@@ -76,16 +79,24 @@ type PreEnqueueCheck func(pod *v1.Pod) bool
 // The interface follows a pattern similar to cache.FIFO and cache.Heap and
 // makes it easy to use those data structures as a SchedulingQueue.
 type SchedulingQueue interface {
+	
 	framework.PodNominator
+	// 向队列中添加待调度的Pod，比如通过kubectl创建一个Pod时，kube-scheduler会通过该接口放入队列中.
 	Add(pod *v1.Pod) error
+	// 返回队列头部的pod，如果队列为空会被阻塞直到新的pod被添加到队列中.Add()和Pop()的组合有点数据结构中queue的感觉了，
+         // 可能不是先入先出，这要通过lessFunc对Pod的进行排序，也就是本文后面提到的优先队列，按照Pod的优先级出队列。
 	// Activate moves the given pods to activeQ iff they're in unschedulableQ or backoffQ.
 	// The passed-in pods are originally compiled from plugins that want to activate Pods,
 	// by injecting the pods through a reserved CycleState struct (PodsToActivate).
 	Activate(pods map[string]*v1.Pod)
+	// 把无法调度的Pod添加回调度队列，前提条件是Pod不在调度队列中。podSchedulingCycle是通过调用SchedulingCycle（）返回的当前调度周期号。
 	// AddUnschedulableIfNotPresent adds an unschedulable pod back to scheduling queue.
 	// The podSchedulingCycle represents the current scheduling cycle number which can be
 	// returned by calling SchedulingCycle().
 	AddUnschedulableIfNotPresent(pod *framework.QueuedPodInfo, podSchedulingCycle int64) error
+	// 首先需要理解什么是调度周期，kube-scheduler没调度一轮算作一个周期。向调度队列添加Pod不能算作一个调度周期，因为没有执行调度动作。
+       // 只有从调度队列中弹出（Pop）才会执行调度动作，当然可能因为某些原因调度失败了，但是也算调度了一次，所以调度周期是在Pop()接口中统计的。
+       // 每次pop一个pod就会加一，可以理解为调度队列的一种特殊的tick。用该接口可以获取当前的调度周期。
 	// SchedulingCycle returns the current number of scheduling cycle which is
 	// cached by scheduling queue. Normally, incrementing this number whenever
 	// a pod is popped (e.g. called Pop()) is enough.
@@ -95,9 +106,17 @@ type SchedulingQueue interface {
 	Pop() (*framework.QueuedPodInfo, error)
 	Update(oldPod, newPod *v1.Pod) error
 	Delete(pod *v1.Pod) error
+	// 首选需要知道调度队列中至少包含activeQ和backoffQ，activeQ是所有ready等待调度的Pod，backoffQ是所有退避Pod。
+       // 什么是退避？与退避三舍一个意思，退避的Pod不会被调度，即便优先级再高也没用。那退避到什么程度呢？调度队列用时间来衡量，比如1秒钟。
+       // 对于kube-scheduler也是有退避策略的，退避时间按照尝试次数指数增长，但不是无限增长，有退避上限，默认的退避上限是10秒。
+       // 在kube-scheduler中Pod退避的原因就是调度失败，退避就是为了减少无意义的频繁重试。
+       // 把所有不可调度的Pod移到activeQ或者backoffQ中
 	MoveAllToActiveOrBackoffQueue(event framework.ClusterEvent, preCheck PreEnqueueCheck)
+	// 说的直白点就是当Pod1依赖(通过标签选择)Pod2时，在Pod2没有被调度前Pod1是不可调度的，当Pod2被调度后调度器就会调用该接口
 	AssignedPodAdded(pod *v1.Pod)
+	// 与AssignedPodAdded一样，只是发生在更新时
 	AssignedPodUpdated(pod *v1.Pod)
+	// 获取所有挂起的Pod，其实就是队列中所有的Pod，因为调度队列中都是未调度（pending）的Pod
 	PendingPods() []*v1.Pod
 	// Close closes the SchedulingQueue so that the goroutine which is
 	// waiting to pop items can exit gracefully.
