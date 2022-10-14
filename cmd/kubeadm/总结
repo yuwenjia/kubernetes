@@ -1,3 +1,5 @@
+<1> kubeadm 生成相关证书说明:
+
 ##在/etc/kubernetes/pki目录下证书的分类： 密钥对：sa.key sa.pub 根证书：ca.crt etcd的ca.crt 私钥 ：ca.key
 
 ##service Account密钥对 sa.key sa.pub 提供给 kube-controller-manager 使用. kube-controller-manager 通过 sa.key 对 token 进行签名, master 节点通过公钥 sa.pub 进行签名的验证 如 kube-proxy 是以 pod 形式运行的, 在 pod 中, 直接使用 service account 与 kube-apiserver 进行认证, 此时就不需要再单独为 kube-proxy 创建证书了, 会直接使用token校验
@@ -15,3 +17,32 @@
 ##pod中Liveness探针客户端证书 pki/etcd/healthcheck-client.crt pki/etcd/healthcheck-client.key
 
 ##apiserver访问etcd的证书 pki/apiserver-etcd-client.crt pki/apiserver-etcd-client.key
+
+
+
+<2> kubeadm 基于dlv的远程调试：
+  基于1.24版本的源码进行编译，要求go 的版本高于1.17 
+  
+  1. 本地clone kubernetes代码
+  # mkdir -p $GOPATH/src/k8s.io/
+  # cd $GOPATH/src/k8s.io/
+  
+  2. 关闭编译优化和内联
+  置了-s -w选项来禁用符号表以及debug信息，因此在编译Kubernetes组件进行远程调试时需要去掉这两个限制，如下：
+
+-    goldflags="${GOLDFLAGS=-s -w} $(kube::version::ldflags)
++    goldflags="${GOLDFLAGS:-} $(kube::version::ldflags)"
+  
+  3. 全量编译
+  $ GO111MODULE=off KUBE_GIT_TREE_STATE=clean make all GOGCFLAGS="all=-N -l"
+  
+  4. 产物
+  在  /usr/local/go/projects/src/k8s.io/kubernetes/_output/bin  目录中
+  
+  5. 在调试机器上
+  dlv --listen=10.131.137.43:1234 --headless=true --api-version=2 exec ./kubeadm reset
+  
+  6. 在本地代码配置remote debug 
+     ip 为10.131.137.43
+     端口为 1234
+     在kubeadm reset 代码处打断点
