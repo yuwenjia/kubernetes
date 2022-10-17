@@ -21,8 +21,8 @@
 
 
 <2> kubeadm 基于dlv的远程调试：
-  基于1.24版本的源码进行编译，要求go 的版本高于1.17 
-  
+  基于1.22版本的源码进行编译，要求go 的版本高于1.17 
+  (不能采用master分支的代码进行编译，因为这时候版本会是master-0.0.0 会低于kubeadm版本的校验) 
   1. 本地clone kubernetes代码
   # mkdir -p $GOPATH/src/k8s.io/
   # cd $GOPATH/src/k8s.io/
@@ -46,3 +46,8 @@
      ip 为10.131.137.43
      端口为 1234
      在kubeadm reset 代码处打断点
+  
+ <3> 将kubenetes 源码的stages 目录下的sdk 替换vendor下的软链
+ 
+ 
+  
